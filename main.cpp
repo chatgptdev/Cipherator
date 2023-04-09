@@ -28,13 +28,14 @@ bool quietMode = false;
 
 void showHelp() {
     if (!quietMode) {
-        std::cout << "Usage: cipherator -a <action> -i <input_file> -o <output_file> [-p <password>] [-k <keyfile>] [-q] [-h]\n\n"
+        std::cout << "Usage: cipherator -a <action> -i <input_file> -o <output_file> [-p <password>] [-k <keyfile>] [-n <iterations>] [-q] [-h]\n\n"
                      "Options:\n"
                      "  -a <action>       'encrypt' or 'decrypt'\n"
                      "  -i <input_file>   Input file path\n"
                      "  -o <output_file>  Output file path\n"
                      "  -p <password>     Password (optional). If password value is empty, it will be requested.\n"
                      "  -k <keyfile>      Keyfile path (optional). If path value is empty, it will be requested.\n"
+                     "  -n <iterations>   Number of iterations for PBKDF2 (optional). Minimum: 10000, Default: 100000\n"
                      "  -q                Quiet mode (no text output)\n"
                      "  -h                Show help\n";
     }
@@ -74,15 +75,34 @@ int main(int argc, char* argv[]) {
     bool helpSpecified = false;
     bool passwordSpecified = false;
     bool keyFileSpecified = false;
+    size_t numIterations = 100000; // Default value
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "-a" && i + 1 < argc) {
-            action = argv[++i];
-        } else if (arg == "-i" && i + 1 < argc) {
-            inputFile = argv[++i];
-        } else if (arg == "-o" && i + 1 < argc) {
-            outputFile = argv[++i];
+        if (arg == "-a") {
+            if (i + 1 < argc) {
+                action = argv[++i];
+            }
+            else {
+                unknownOption = true;
+                errStr << "-a option requires an argument" << std::endl;
+            }
+        } else if (arg == "-i") {
+            if (i + 1 < argc) {
+                inputFile = argv[++i];
+            }
+            else {
+                unknownOption = true;
+                errStr << "-i option requires an argument" << std::endl;
+            }
+        } else if (arg == "-o") {
+            if (i + 1 < argc) {
+                outputFile = argv[++i];
+            }
+            else {
+                unknownOption = true;
+                errStr << "-o option requires an argument" << std::endl;
+            }
         } else if (arg == "-p") {
             passwordSpecified = true;
             if (i + 1 < argc) {
@@ -98,6 +118,24 @@ int main(int argc, char* argv[]) {
             keyfile = "";
             if (i + 1 < argc) {
               keyfile = argv[++i];
+            }
+        } else if (arg == "-n") {
+            if (i + 1 < argc) {
+                try {
+                    numIterations = std::stoul(argv[++i]);
+                }
+                catch (...) {
+                    numIterations = -1;
+                }
+
+                if (numIterations < 10000u) {
+                    unknownOption = true;
+                    errStr << "-n option argument must be a valid integer larger than or equal to 10000" << std::endl;
+                }
+            }
+            else {
+                unknownOption = true;
+                errStr << "-n option requires an argument" << std::endl;
             }
         } else if (arg == "-q") {
             quietMode = true;
@@ -140,7 +178,7 @@ int main(int argc, char* argv[]) {
         std::getline(std::cin, keyfile);
     }
 
-    CryptoTool tool;
+    CryptoTool tool(numIterations);
     bool success;
     if (action == "encrypt") {
         success = tool.encrypt(inputFile, outputFile, password, keyfile);

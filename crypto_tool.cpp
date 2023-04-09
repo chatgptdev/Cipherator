@@ -55,8 +55,6 @@ bool CryptoTool::encrypt(const std::string& inputFile, const std::string& output
             throw std::runtime_error("Error opening output file");
         }
 
-        KeyManagement key_management;
-        Encryption encryption;
         secure_vector<unsigned char> salt = generateRandom(SALT_SIZE);
         secure_vector<unsigned char> key = key_management.deriveKey(password, keyFile, salt);
         secure_vector<unsigned char> nonce = generateRandom(encryption.getNonceSize());
@@ -110,9 +108,6 @@ bool CryptoTool::decrypt(const std::string& inputFile, const std::string& output
 
         std::streamsize fileSize = input.tellg();
         input.seekg(0, std::ios::beg);
-
-        KeyManagement key_management;
-        Encryption encryption;
 
         if (fileSize < static_cast<std::streamsize>(SALT_SIZE + encryption.getNonceSize() + encryption.getTagSize())) {
             throw std::runtime_error("Input file is too small to contain valid encrypted data");

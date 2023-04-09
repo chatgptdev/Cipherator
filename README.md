@@ -5,7 +5,7 @@ Cipherator is a command-line tool for encrypting and decrypting files using AES-
 
 - Encryption using AES-256 in GCM mode, ensuring data confidentiality and integrity.
 - 12-byte nonce for GCM.
-- Key derivation using PBKDF2 with HMAC-SHA256 (100,000 iterations).
+- Key derivation using PBKDF2 with HMAC-SHA256 (configurable number of iterations. Default: 100,000 , Minimum: 10,000).
 - Password and/or keyfile support for key derivation (only the first 1MiB of the keyfile are used)
 - SHA256 hashing of keyfile data and password when a keyfile is specified. The resulting hash value is used as input to the PBKDF2 function.
 - Data encrypted in chunks of 64KiB. Each chunk uses a unique nonce derived from master nonce based on chunk index.
@@ -25,6 +25,7 @@ Options:
 - `-o <output_file>`: Output file path.
 - `-p <password>`: Password (optional). If the password value is empty, it will be requested.
 - `-k <keyfile>`: Keyfile path (optional). If the path value is empty, it will be requested.
+- `-n <iterations>`: Number of iterations for PBKDF2 (optional). Minimum: 10000, Default: 100000\n"
 - `-q`: Quiet mode (no text output).
 - `-h`: Show help.
 
@@ -39,7 +40,8 @@ When a file is encrypted, the following data is stored in the output file:
 
 ## Key Management
 
-Cipherator employs PBKDF2 with HMAC-SHA256 and 100,000 iterations to derive a 256-bit key from the provided password and/or keyfile. When a keyfile is specified, the first 1MiB of the keyfile is read, and its data is hashed using SHA256 along with the password (if any). The resulting hash value is used as input to the PBKDF2 function.
+Cipherator employs PBKDF2 with HMAC-SHA256 and a configurable number of iterations (Default: 100,000 , Minimum: 10,000) to derive a 256-bit key from the provided password and/or keyfile. When a keyfile is specified, the first 1MiB of the keyfile is read, and its data is hashed using SHA256 along with the password (if any). The resulting hash value is used as input to the PBKDF2 function.
+
 Cipherator uses the derived 256-bit key for encrypting all chunks of the file, while employing a unique nonce for each chunk to ensure maximum security. The nonce for each chunk is derived by XORing the master nonce with the chunk index. This approach ensures that even if two chunks have the same content, their respective ciphertexts will be different due to the unique nonces used during encryption. This makes it much more difficult for an attacker to analyze the encrypted data and draw conclusions about the original plaintext.
 By using a unique nonce for each chunk, Cipherator mitigates the risks associated with nonce reuse and significantly enhances the security of the encrypted data.
 

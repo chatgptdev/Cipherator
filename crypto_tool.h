@@ -25,7 +25,7 @@
 
 class CryptoTool {
 public:
-    CryptoTool() {}
+    CryptoTool(size_t iterations = 100000) : encryption(), key_management(iterations) {}
     ~CryptoTool() {}
 
     secure_vector<unsigned char> generateRandom(size_t count);
