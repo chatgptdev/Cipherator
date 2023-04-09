@@ -85,7 +85,6 @@ int main(int argc, char* argv[]) {
             outputFile = argv[++i];
         } else if (arg == "-p") {
             passwordSpecified = true;
-            password.secure_clear();
             if (i + 1 < argc) {
                 const char* argPassword = argv[++i];
                 size_t argPasswordLen = strlen(argPassword);
