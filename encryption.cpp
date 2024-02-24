@@ -70,8 +70,8 @@ void Encryption::encrypt(const unsigned char* pData, size_t data_len, const secu
     authInfo.pbTag = tag.data();
 
     status = BCryptEncrypt(hKey, (PUCHAR) pData, data_len, &authInfo, nonce.data(), nonce.size(), encryptedData.data(), (DWORD) cbCipherText, &cbOutput, 0);
+    BCryptDestroyKey(hKey);
     if (!BCRYPT_SUCCESS(status)) {
-        BCryptDestroyKey(hKey);
         throw std::runtime_error("Error encrypting data");
     }
 #elif __APPLE__
@@ -107,8 +107,6 @@ void Encryption::encrypt(const unsigned char* pData, size_t data_len, const secu
     }
 
     CCCryptorRelease(cryptorRef);
-
-    std::copy(tag.begin(), tag.end(), encryptedData.begin() + cbCipherText);
 #else
 
     EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
@@ -149,10 +147,6 @@ void Encryption::encrypt(const unsigned char* pData, size_t data_len, const secu
     
 #endif
     std::copy(tag.begin(), tag.end(), encryptedData.begin() + cbCipherText);
-
-#ifdef _WIN32
-    BCryptDestroyKey(hKey);
-#endif
 }
 
 void Encryption::decrypt(const unsigned char* pData, size_t data_len, const secure_vector<unsigned char>& key, const secure_vector<unsigned char>& iv, secure_vector<unsigned char>& decryptedData) {
@@ -189,12 +183,10 @@ void Encryption::decrypt(const unsigned char* pData, size_t data_len, const secu
 
     DWORD cbOutput = (DWORD) cbPlainText;
     status = BCryptDecrypt(hKey, (PUCHAR) pData, (DWORD) cbPlainText, &authInfo, nonce.data(), nonceSize, decryptedData.data(), cbOutput, &cbOutput, 0);
+    BCryptDestroyKey(hKey);
     if (!BCRYPT_SUCCESS(status)) {
-        BCryptDestroyKey(hKey);
         throw std::runtime_error("Error decrypting data: please check that you are using the correct password and key file");
     }
-
-    BCryptDestroyKey(hKey);
 #elif __APPLE__
     CCCryptorRef cryptorRef = NULL;
     CCCryptorStatus ccStatus = CCCryptorCreateWithMode(kCCDecrypt, kCCModeGCM, kCCAlgorithmAES,
