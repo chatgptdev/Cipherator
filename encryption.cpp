@@ -19,6 +19,7 @@
 
 #include "encryption.h"
 #include <stdexcept>
+#include "crypto_tool.h"
 
 Encryption::Encryption() {
 #ifdef _WIN32
@@ -75,38 +76,31 @@ void Encryption::encrypt(const unsigned char* pData, size_t data_len, const secu
         throw std::runtime_error("Error encrypting data");
     }
 #elif __APPLE__
-    // Initialize encryption with AES GCM
-    CCCryptorRef cryptorRef = NULL;
-    CCCryptorStatus ccStatus = CCCryptorCreateWithMode(kCCEncrypt, kCCModeGCM, kCCAlgorithmAES,
-                                                       ccNoPadding, nonce.data(), key.data(), key.size(),
-                                                       NULL, 0, 0, 0, &cryptorRef);
+    // Initialize and perform encryption in one step using AES GCM
+    size_t tagLength = tag.size();
+    size_t actualDataLength = 0; // This will hold the length of the encrypted data
+    CCCryptorStatus ccStatus = CCCryptorGCMOneshotEncrypt(
+                                   kCCAlgorithmAES, // Algorithm
+                                   key.data(), // Key
+                                   key.size(), // Key length
+                                   nonce.data(), // IV
+                                   nonce.size(), // IV length
+                                   pData, // Data to encrypt
+                                   data_len, // Length of data
+                                   encryptedData.data(), // Output buffer
+                                   encryptedData.size(), // Output buffer size, should be at least data_len
+                                   &actualDataLength, // Actual encrypted data length
+                                   NULL, // Authentication data (AAD)
+                                   0, // Length of AAD
+                                   tag.data(), // GCM authentication tag
+                                   &tagLength // Length of GCM tag
+                               );
+
     if (ccStatus != kCCSuccess) {
-        throw std::runtime_error("Error creating CCCryptorRef");
+        throw std::runtime_error("Error during GCM encryption");
     }
 
-    // Perform the encryption
-    size_t dataMoved = 0;
-    ccStatus = CCCryptorUpdate(cryptorRef, pData, data_len, encryptedData.data(), encryptedData.size(), &dataMoved);
-    if (ccStatus != kCCSuccess) {
-        CCCryptorRelease(cryptorRef);
-        throw std::runtime_error("Error encrypting data");
-    }
-
-    // Finalize encryption. For GCM, this doesn't encrypt more data but is necessary
-    ccStatus = CCCryptorFinal(cryptorRef, encryptedData.data() + dataMoved, encryptedData.size() - dataMoved, &dataMoved);
-    if (ccStatus != kCCSuccess) {
-        CCCryptorRelease(cryptorRef);
-        throw std::runtime_error("Error finalizing encryption");
-    }
-
-    // Get the authentication tag
-    ccStatus = CCCryptorGCMGetTag(cryptorRef, tag.data(), tag.size());
-    if (ccStatus != kCCSuccess) {
-        CCCryptorRelease(cryptorRef);
-        throw std::runtime_error("Error getting GCM tag");
-    }
-
-    CCCryptorRelease(cryptorRef);
+    cbCipherText = actualDataLength;
 #else
 
     EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
@@ -188,37 +182,25 @@ void Encryption::decrypt(const unsigned char* pData, size_t data_len, const secu
         throw std::runtime_error("Error decrypting data: please check that you are using the correct password and key file");
     }
 #elif __APPLE__
-    CCCryptorRef cryptorRef = NULL;
-    CCCryptorStatus ccStatus = CCCryptorCreateWithMode(kCCDecrypt, kCCModeGCM, kCCAlgorithmAES,
-                                                       ccNoPadding, iv.data(), key.data(), key.size(),
-                                                       NULL, 0, 0, 0, &cryptorRef);
-    if (ccStatus != kCCSuccess) {
-        throw std::runtime_error("Error creating CCCryptorRef");
-    }
+    // Perform the decryption in one step
+    CCCryptorStatus ccStatus = CCCryptorGCMOneshotDecrypt(
+                                   kCCAlgorithmAES, // Algorithm
+                                   key.data(), // Key
+                                   key.size(), // Key length
+                                   iv.data(), // IV
+                                   iv.size(), // IV length
+                                   NULL, // Authentication data (AAD)
+                                   0, // Length of AAD
+                                   pData, // Data to decrypt
+                                   cbPlainText, // Length of data
+                                   decryptedData.data(), // Output buffer for decrypted data
+                                   pData + cbPlainText, // Authentication tag
+                                   authTagSize // Length of authentication tag
+                               );
 
-    // Perform the decryption
-    size_t dataMoved = 0;
-    ccStatus = CCCryptorUpdate(cryptorRef, pData, data_len - authTagSize, decryptedData.data(), decryptedData.size(), &dataMoved);
     if (ccStatus != kCCSuccess) {
-        CCCryptorRelease(cryptorRef);
-        throw std::runtime_error("Error decrypting data");
+        throw std::runtime_error("Error during GCM decryption: please check that you are using the correct password and key file.");
     }
-
-    // Set the authentication tag
-    ccStatus = CCCryptorSetTag(cryptorRef, pData + data_len - authTagSize, authTagSize);
-    if (ccStatus != kCCSuccess) {
-        CCCryptorRelease(cryptorRef);
-        throw std::runtime_error("Error setting GCM tag");
-    }
-
-    // Finalize decryption. For GCM, this doesn't decrypt more data but is necessary
-    ccStatus = CCCryptorFinal(cryptorRef, decryptedData.data() + dataMoved, decryptedData.size() - dataMoved, &dataMoved);
-    if (ccStatus != kCCSuccess) {
-        CCCryptorRelease(cryptorRef);
-        throw std::runtime_error("Error finalizing decryption: please check that you are using the correct password and key file");
-    }
-
-    CCCryptorRelease(cryptorRef);
 #else
     EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
     if (!ctx) {
@@ -254,5 +236,19 @@ void Encryption::decrypt(const unsigned char* pData, size_t data_len, const secu
     EVP_CIPHER_CTX_free(ctx);
 
 #endif
+}
+
+bool Encryption::AutoTest() {
+    secure_vector<unsigned char> key = CryptoTool::generateRandom(32);
+    secure_vector<unsigned char> iv = CryptoTool::generateRandom(12);
+    secure_vector<unsigned char> data = CryptoTool::generateRandom(1321);
+    secure_vector<unsigned char> encryptedData;
+    secure_vector<unsigned char> decryptedData;
+
+    Encryption enc;
+    enc.encrypt(data.data(), data.size(), key, iv, encryptedData);
+    enc.decrypt(encryptedData.data(), encryptedData.size(), key, iv, decryptedData);
+
+    return data == decryptedData;
 }
 

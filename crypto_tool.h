@@ -28,7 +28,7 @@ public:
     CryptoTool(size_t iterations = 100000) : encryption(), key_management(iterations) {}
     ~CryptoTool() {}
 
-    secure_vector<unsigned char> generateRandom(size_t count);
+    static secure_vector<unsigned char> generateRandom(size_t count);
     bool encrypt(const std::string& inputFile, const std::string& outputFile, const secure_vector<char>& password, const std::string& keyfile);
     bool decrypt(const std::string& inputFile, const std::string& outputFile, const secure_vector<char>& password, const std::string& keyfile);
 

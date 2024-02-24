@@ -38,6 +38,8 @@ public:
     void encrypt(const unsigned char* pData, size_t data_len, const secure_vector<unsigned char>& key, const secure_vector<unsigned char>& iv, secure_vector<unsigned char>& encryptedData);
     void decrypt(const unsigned char* pData, size_t data_len, const secure_vector<unsigned char>& key, const secure_vector<unsigned char>& iv, secure_vector<unsigned char>& decryptedData);
 
+    static bool AutoTest();
+
 protected:
 #ifdef _WIN32
     BCRYPT_ALG_HANDLE hAesAlgorithm;
