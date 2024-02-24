@@ -22,6 +22,7 @@
 
 
 KeyManagement::KeyManagement(size_t iterations) : iterationsCount(iterations) {
+#ifdef _WIN32
     NTSTATUS status = BCryptOpenAlgorithmProvider(&hSha256Algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0);
     if (!BCRYPT_SUCCESS(status)) {
         throw std::runtime_error("Error opening hash algorithm provider");
@@ -31,16 +32,18 @@ KeyManagement::KeyManagement(size_t iterations) : iterationsCount(iterations) {
         BCryptCloseAlgorithmProvider(hSha256Algorithm, 0);
         throw std::runtime_error("Error opening HMAC algorithm provider");
     }
+#endif
 }
 
 KeyManagement::~KeyManagement() {
+#ifdef _WIN32
     BCryptCloseAlgorithmProvider(hSha256Algorithm, 0);
     BCryptCloseAlgorithmProvider(hHMACSha256Algorithm, 0);
+#endif
+
 }
 
 secure_vector<unsigned char> KeyManagement::deriveKey(const secure_vector<char>& password, const std::string& keyFile, const secure_vector<unsigned char>& salt) {
-    NTSTATUS status;
-
     secure_vector<unsigned char> finalPassword(password.begin(), password.end());
 
     if (!keyFile.empty()) {
@@ -54,11 +57,22 @@ secure_vector<unsigned char> KeyManagement::deriveKey(const secure_vector<char>&
             finalPassword.insert(finalPassword.end(), buffer.begin(), buffer.end());
 
             secure_vector<unsigned char> hash(32);
-            status = BCryptHash(hSha256Algorithm, nullptr, 0, (PUCHAR)finalPassword.data(), finalPassword.size(), hash.data(), hash.size());
+#ifdef _WIN32
+            NTSTATUS status = BCryptHash(hSha256Algorithm, nullptr, 0, (PUCHAR)finalPassword.data(), finalPassword.size(), hash.data(), hash.size());
             if (!BCRYPT_SUCCESS(status)) {
                 throw std::runtime_error("Error hashing password and key file content");
             }
-
+#elif defined(__APPLE__)
+            CC_SHA256_CTX sha256Context;
+            CC_SHA256_Init(&sha256Context);
+            CC_SHA256_Update(&sha256Context, finalPassword.data(), finalPassword.size());
+            CC_SHA256_Final(hash.data(), &sha256Context);
+#else
+            unsigned int length = 0;
+            if (!EVP_Digest(finalPassword.data(), finalPassword.size(), hash.data(), &length, EVP_sha256(), nullptr)) {
+                throw std::runtime_error("Error hashing password and key file content");
+            }
+#endif
             finalPassword = hash;
         }
         else {
@@ -66,15 +80,21 @@ secure_vector<unsigned char> KeyManagement::deriveKey(const secure_vector<char>&
         }
     }
 
-    const DWORD iterations = getIterationsCount();
-    DWORD cbDerivedKey = 32;
+    const size_t iterations = getIterationsCount();
+    size_t cbDerivedKey = 32;
     secure_vector<unsigned char> derivedKey(cbDerivedKey);
-
-    status = BCryptDeriveKeyPBKDF2(hHMACSha256Algorithm, (PUCHAR)finalPassword.data(), finalPassword.size(), (PUCHAR)salt.data(), salt.size(), iterations, derivedKey.data(), cbDerivedKey, 0);
+#ifdef _WIN32
+    NTSTATUS status = BCryptDeriveKeyPBKDF2(hHMACSha256Algorithm, (PUCHAR)finalPassword.data(), finalPassword.size(), (PUCHAR)salt.data(), salt.size(), (DWORD) iterations, derivedKey.data(), (DWORD) cbDerivedKey, 0);
     if (!BCRYPT_SUCCESS(status)) {
         throw std::runtime_error("Error deriving key from password and key file");
     }
-
+#elif defined(__APPLE__)
+    CCKeyDerivationPBKDF(kCCPBKDF2, finalPassword.data(), finalPassword.size(), salt.data(), salt.size(), kCCPRFHmacAlgSHA256, iterations, derivedKey.data(), derivedKey.size());
+#else
+    if (!PKCS5_PBKDF2_HMAC((const char*)finalPassword.data(), finalPassword.size(), salt.data(), (int) salt.size(), (int) iterations, EVP_sha256(), (int) cbDerivedKey, derivedKey.data())) {
+        throw std::runtime_error("Error deriving key from password and key file");
+    }
+#endif
     return derivedKey;
 }
 

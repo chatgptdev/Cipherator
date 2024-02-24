@@ -17,7 +17,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [windows-latest]
+        os: [ubuntu-20.04, windows-latest, macOS-11]
 
     steps:
     - uses: actions/checkout@v3
@@ -31,12 +31,20 @@ jobs:
       # Build your program with the given configuration
       run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
 
+    - name: Create .deb package (Ubuntu)
+      if: matrix.os == 'ubuntu-20.04'
+      run: |
+        cd build
+        cmake --build . --target package
+
     - name: Store artifacts
       uses: actions/upload-artifact@v2
       with:
         name: cipherator-${{ matrix.os }}
         path: |
+          ${{github.workspace}}/build/cipherator
           ${{github.workspace}}/build/${{env.BUILD_TYPE}}/cipherator.exe
+          ${{github.workspace}}/build/*.deb
   release:
     needs: build
     runs-on: ubuntu-latest
@@ -48,14 +56,37 @@ jobs:
     - name: Download artifacts
       uses: actions/download-artifact@v2
       with:
+        name: cipherator-ubuntu-20.04
+        path: artifacts/ubuntu
+
+    - name: Download artifacts
+      uses: actions/download-artifact@v2
+      with:
         name: cipherator-windows-latest
         path: artifacts/windows
+
+    - name: Download artifacts
+      uses: actions/download-artifact@v2
+      with:
+        name: cipherator-macOS-11
+        path: artifacts/mac
+
+    - name: Compress Ubuntu assets
+      run: |
+        chmod +x artifacts/ubuntu/cipherator
+        tar czvf artifacts/ubuntu/cipherator-ubuntu-x86_64.tar.gz -C artifacts/ubuntu cipherator
         
     - name: Compress Windows assets
       run: |
         sudo apt-get update
         sudo apt-get install -y zip
         zip -j artifacts/windows/cipherator-windows.zip artifacts/windows/cipherator.exe
+
+    - name: Compress macOS assets
+      run: |
+        chmod +x artifacts/mac/cipherator
+        tar czvf artifacts/mac/cipherator-macOS.tar.gz -C artifacts/mac cipherator
+
     - name: Create Release
       id: create_release
       uses: actions/create-release@v1
@@ -67,6 +98,26 @@ jobs:
         draft: false
         prerelease: false
 
+    - name: Upload Release Asset (Ubuntu)
+      uses: actions/upload-release-asset@v1
+      env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_CREATION_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: artifacts/ubuntu/cipherator-ubuntu-x86_64.tar.gz
+        asset_name: cipherator-ubuntu-x86_64.tar.gz
+        asset_content_type: application/octet-stream
+          
+    - name: Upload Linux DEB package
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.RELEASE_CREATION_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: artifacts/ubuntu/cipherator_x86_64.deb
+        asset_name: cipherator_x86_64.deb
+        asset_content_type: application/octet-stream
+
     - name: Upload Release Asset (Windows)
       uses: actions/upload-release-asset@v1
       env:
@@ -75,4 +126,14 @@ jobs:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
         asset_path: artifacts/windows/cipherator-windows.zip
         asset_name: cipherator-windows.zip
+        asset_content_type: application/octet-stream
+
+    - name: Upload Release Asset (macOS)
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.RELEASE_CREATION_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: artifacts/mac/cipherator-macOS.tar.gz
+        asset_name: cipherator-macOS.tar.gz
         asset_content_type: application/octet-stream

@@ -21,6 +21,7 @@
 #include <stdexcept>
 
 Encryption::Encryption() {
+#ifdef _WIN32
     NTSTATUS status;
     status = BCryptOpenAlgorithmProvider(&hAesAlgorithm, BCRYPT_AES_ALGORITHM, nullptr, 0);
     if (!BCRYPT_SUCCESS(status)) {
@@ -32,29 +33,35 @@ Encryption::Encryption() {
         BCryptCloseAlgorithmProvider(hAesAlgorithm, 0);
         throw std::runtime_error("Error setting GCM chaining mode");
     }
+#endif
 }
 
 Encryption::~Encryption() {
+    #ifdef _WIN32
     BCryptCloseAlgorithmProvider(hAesAlgorithm, 0);
+    #endif
 }
 
 void Encryption::encrypt(const unsigned char* pData, size_t data_len, const secure_vector<unsigned char>& key, const secure_vector<unsigned char>& iv, secure_vector<unsigned char>& encryptedData) {
-    NTSTATUS status;
-    DWORD authTagSize = getTagSize();
+
+    size_t authTagSize = getTagSize();
 
     if (iv.size() != getNonceSize()) {
         throw std::runtime_error("Error validating IV for encryption: IV length is invalid");
     }
 
+    size_t cbCipherText = data_len;
+    secure_vector<unsigned char> tag(authTagSize);
+    secure_vector<unsigned char> nonce(iv.begin(), iv.end());
+    encryptedData.resize(cbCipherText + authTagSize);
+
+#ifdef _WIN32
     BCRYPT_KEY_HANDLE hKey;
-    status = BCryptGenerateSymmetricKey(hAesAlgorithm, &hKey, nullptr, 0, (PBYTE)key.data(), key.size(), 0);
+    NTSTATUS status = BCryptGenerateSymmetricKey(hAesAlgorithm, &hKey, nullptr, 0, (PBYTE)key.data(), key.size(), 0);
     if (!BCRYPT_SUCCESS(status)) {
         throw std::runtime_error("Error generating symmetric key");
     }
-
-    DWORD cbCipherText;
-    secure_vector<unsigned char> tag(authTagSize);
-    secure_vector<unsigned char> nonce(iv.begin(), iv.end());
+    DWORD cbOutput = cbCipherText;
     BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO authInfo;
     BCRYPT_INIT_AUTH_MODE_INFO(authInfo);
     authInfo.pbNonce = nonce.data();
@@ -62,23 +69,94 @@ void Encryption::encrypt(const unsigned char* pData, size_t data_len, const secu
     authInfo.cbTag = tag.size();
     authInfo.pbTag = tag.data();
 
-    cbCipherText = data_len;
-
-    encryptedData.resize(cbCipherText + authTagSize);
-
-    status = BCryptEncrypt(hKey, (PUCHAR) pData, data_len, &authInfo, nonce.data(), nonce.size(), encryptedData.data(), cbCipherText, &cbCipherText, 0);
+    status = BCryptEncrypt(hKey, (PUCHAR) pData, data_len, &authInfo, nonce.data(), nonce.size(), encryptedData.data(), (DWORD) cbCipherText, &cbOutput, 0);
     if (!BCRYPT_SUCCESS(status)) {
         BCryptDestroyKey(hKey);
         throw std::runtime_error("Error encrypting data");
     }
+#elif __APPLE__
+    // Initialize encryption with AES GCM
+    CCCryptorRef cryptorRef = NULL;
+    CCCryptorStatus ccStatus = CCCryptorCreateWithMode(kCCEncrypt, kCCModeGCM, kCCAlgorithmAES,
+                                                       ccNoPadding, nonce.data(), key.data(), key.size(),
+                                                       NULL, 0, 0, 0, &cryptorRef);
+    if (ccStatus != kCCSuccess) {
+        throw std::runtime_error("Error creating CCCryptorRef");
+    }
+
+    // Perform the encryption
+    size_t dataMoved = 0;
+    ccStatus = CCCryptorUpdate(cryptorRef, pData, data_len, encryptedData.data(), encryptedData.size(), &dataMoved);
+    if (ccStatus != kCCSuccess) {
+        CCCryptorRelease(cryptorRef);
+        throw std::runtime_error("Error encrypting data");
+    }
+
+    // Finalize encryption. For GCM, this doesn't encrypt more data but is necessary
+    ccStatus = CCCryptorFinal(cryptorRef, encryptedData.data() + dataMoved, encryptedData.size() - dataMoved, &dataMoved);
+    if (ccStatus != kCCSuccess) {
+        CCCryptorRelease(cryptorRef);
+        throw std::runtime_error("Error finalizing encryption");
+    }
+
+    // Get the authentication tag
+    ccStatus = CCCryptorGCMGetTag(cryptorRef, tag.data(), tag.size());
+    if (ccStatus != kCCSuccess) {
+        CCCryptorRelease(cryptorRef);
+        throw std::runtime_error("Error getting GCM tag");
+    }
+
+    CCCryptorRelease(cryptorRef);
 
     std::copy(tag.begin(), tag.end(), encryptedData.begin() + cbCipherText);
+#else
 
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) {
+        throw std::runtime_error("Error creating cipher context");
+    }
+
+    if (1 != EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr)) {
+        EVP_CIPHER_CTX_free(ctx);
+        throw std::runtime_error("Error initializing encryption context");
+    }
+
+    if (1 != EVP_EncryptInit_ex(ctx, nullptr, nullptr, key.data(), nonce.data())) {
+        EVP_CIPHER_CTX_free(ctx);
+        throw std::runtime_error("Error setting key and IV for encryption");
+    }
+
+    int len;
+    if (1 != EVP_EncryptUpdate(ctx, encryptedData.data(), &len, pData, (int) data_len)) {
+        EVP_CIPHER_CTX_free(ctx);
+        throw std::runtime_error("Error encrypting data");
+    }
+
+    cbCipherText = len;
+    if (1 != EVP_EncryptFinal_ex(ctx, encryptedData.data() + len, &len)) {
+        EVP_CIPHER_CTX_free(ctx);
+        throw std::runtime_error("Error finalizing encryption");
+    }
+
+    cbCipherText += len;
+    if (1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, (int) authTagSize, tag.data())) {
+        EVP_CIPHER_CTX_free(ctx);
+        throw std::runtime_error("Error getting GCM tag");
+    }
+
+
+    EVP_CIPHER_CTX_free(ctx);
+    
+#endif
+    std::copy(tag.begin(), tag.end(), encryptedData.begin() + cbCipherText);
+
+#ifdef _WIN32
     BCryptDestroyKey(hKey);
+#endif
 }
 
 void Encryption::decrypt(const unsigned char* pData, size_t data_len, const secure_vector<unsigned char>& key, const secure_vector<unsigned char>& iv, secure_vector<unsigned char>& decryptedData) {
-    NTSTATUS status;
+    
     size_t authTagSize = getTagSize();
     size_t nonceSize = getNonceSize();
 
@@ -90,6 +168,11 @@ void Encryption::decrypt(const unsigned char* pData, size_t data_len, const secu
         throw std::runtime_error("Error validating IV for decryption: IV length is invalid");
     }
 
+    size_t cbPlainText = data_len - authTagSize;
+    decryptedData.resize(cbPlainText);
+
+#ifdef _WIN32
+    NTSTATUS status;
     BCRYPT_KEY_HANDLE hKey;
     status = BCryptGenerateSymmetricKey(hAesAlgorithm, &hKey, nullptr, 0, (PBYTE)key.data(), key.size(), 0);
     if (!BCRYPT_SUCCESS(status)) {
@@ -104,14 +187,80 @@ void Encryption::decrypt(const unsigned char* pData, size_t data_len, const secu
     authInfo.pbTag = (PBYTE)(pData + data_len - authTagSize);
     authInfo.cbTag = authTagSize;
 
-    DWORD cbPlainText = data_len - authTagSize;
-    decryptedData.resize(cbPlainText);
-    status = BCryptDecrypt(hKey, (PUCHAR) pData, cbPlainText, &authInfo, nonce.data(), nonceSize, decryptedData.data(), cbPlainText, &cbPlainText, 0);
+    DWORD cbOutput = (DWORD) cbPlainText;
+    status = BCryptDecrypt(hKey, (PUCHAR) pData, (DWORD) cbPlainText, &authInfo, nonce.data(), nonceSize, decryptedData.data(), cbOutput, &cbOutput, 0);
     if (!BCRYPT_SUCCESS(status)) {
         BCryptDestroyKey(hKey);
-        throw std::runtime_error("Error decrypting data");
+        throw std::runtime_error("Error decrypting data: please check that you are using the correct password and key file");
     }
 
     BCryptDestroyKey(hKey);
+#elif __APPLE__
+    CCCryptorRef cryptorRef = NULL;
+    CCCryptorStatus ccStatus = CCCryptorCreateWithMode(kCCDecrypt, kCCModeGCM, kCCAlgorithmAES,
+                                                       ccNoPadding, iv.data(), key.data(), key.size(),
+                                                       NULL, 0, 0, 0, &cryptorRef);
+    if (ccStatus != kCCSuccess) {
+        throw std::runtime_error("Error creating CCCryptorRef");
+    }
+
+    // Perform the decryption
+    size_t dataMoved = 0;
+    ccStatus = CCCryptorUpdate(cryptorRef, pData, data_len - authTagSize, decryptedData.data(), decryptedData.size(), &dataMoved);
+    if (ccStatus != kCCSuccess) {
+        CCCryptorRelease(cryptorRef);
+        throw std::runtime_error("Error decrypting data");
+    }
+
+    // Set the authentication tag
+    ccStatus = CCCryptorSetTag(cryptorRef, pData + data_len - authTagSize, authTagSize);
+    if (ccStatus != kCCSuccess) {
+        CCCryptorRelease(cryptorRef);
+        throw std::runtime_error("Error setting GCM tag");
+    }
+
+    // Finalize decryption. For GCM, this doesn't decrypt more data but is necessary
+    ccStatus = CCCryptorFinal(cryptorRef, decryptedData.data() + dataMoved, decryptedData.size() - dataMoved, &dataMoved);
+    if (ccStatus != kCCSuccess) {
+        CCCryptorRelease(cryptorRef);
+        throw std::runtime_error("Error finalizing decryption: please check that you are using the correct password and key file");
+    }
+
+    CCCryptorRelease(cryptorRef);
+#else
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) {
+        throw std::runtime_error("Error creating cipher context");
+    }
+
+    if (1 != EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr)) {
+        EVP_CIPHER_CTX_free(ctx);
+        throw std::runtime_error("Error initializing decryption context");
+    }
+
+    if (1 != EVP_DecryptInit_ex(ctx, nullptr, nullptr, key.data(), iv.data())) {
+        EVP_CIPHER_CTX_free(ctx);
+        throw std::runtime_error("Error setting key and IV for decryption");
+    }
+
+    int len;
+    if (1 != EVP_DecryptUpdate(ctx, decryptedData.data(), &len, pData, (int) data_len - authTagSize)) {
+        EVP_CIPHER_CTX_free(ctx);
+        throw std::runtime_error("Error decrypting data");
+    }
+
+    if (1 != EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, (int) authTagSize, (void*) (pData + data_len - authTagSize))) {
+        EVP_CIPHER_CTX_free(ctx);
+        throw std::runtime_error("Error setting GCM tag");
+    }
+
+    if (1 != EVP_DecryptFinal_ex(ctx, decryptedData.data() + len, &len)) {
+        EVP_CIPHER_CTX_free(ctx);
+        throw std::runtime_error("Error finalizing decryption: please check that you are using the correct password and key file");
+    }
+
+    EVP_CIPHER_CTX_free(ctx);
+
+#endif
 }
 

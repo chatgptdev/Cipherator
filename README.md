@@ -1,5 +1,6 @@
 # Cipherator
-Cipherator is a command-line tool for encrypting and decrypting files using AES-256 in GCM mode. Mainly written by ChatGPT 4 following prompts by @chatgptdev.
+Cipherator is a command-line tool for encrypting and decrypting files using AES-256 in GCM mode. It provides secure encryption and decryption of files using a password and/or keyfile, and it employs a unique nonce for each chunk of data to ensure maximum security. Cipherator is designed to be easy to use and provides a simple, yet powerful, interface for encrypting and decrypting files.
+ChatGPT 4 was used to implement its foundations.
 
 ## Features
 
@@ -10,7 +11,11 @@ Cipherator is a command-line tool for encrypting and decrypting files using AES-
 - SHA256 hashing of keyfile data and password when a keyfile is specified. The resulting hash value is used as input to the PBKDF2 function.
 - Data encrypted in chunks of 64KiB. Each chunk uses a unique nonce derived from master nonce based on chunk index.
 - Secure memory handling of all data (including password and key file).
-- Utilizes the Windows BCrypt API for cryptographic operations.
+- Cross-platform support:
+    - Windows (BCrypt API for cryptographic operations)
+    - Linux (OpenSSL library for cryptographic operations)
+    - macOS (Common Crypto library for cryptographic operations)
+- Command-line interface with options for quiet mode and help.
 
 ## Usage
 

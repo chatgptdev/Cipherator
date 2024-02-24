@@ -19,16 +19,27 @@
 
 #include <iostream>
 #include <string>
+#include <cstring>
 #include <sstream>
 #include <vector>
+#ifdef _WIN32
 #include <conio.h>
+#else
+#include <termios.h>
+#include <unistd.h>
+#endif
+
 #include "crypto_tool.h"
+
+#define VERSION "1.1.0"
 
 bool quietMode = false;
 
-void showHelp() {
+void showHelp(std::string& msg) {
     if (!quietMode) {
-        std::cout << "Usage: cipherator -a <action> -i <input_file> -o <output_file> [-p <password>] [-k <keyfile>] [-n <iterations>] [-q] [-h]\n\n"
+        std::cout <<"Cipherator " << VERSION << "\n"
+                  << msg << "\n"
+                  <<"Usage: cipherator -a <action> -i <input_file> -o <output_file> [-p <password>] [-k <keyfile>] [-n <iterations>] [-q] [-h]\n\n"
                      "Options:\n"
                      "  -a <action>       'encrypt' or 'decrypt'\n"
                      "  -i <input_file>   Input file path\n"
@@ -41,6 +52,12 @@ void showHelp() {
     }
 }
 
+void showHelp() {
+    std::string msg = "";
+    showHelp(msg);
+} 
+
+#ifdef _WIN32
 void read_password(secure_vector<char>& password) {
     int ch;
 
@@ -65,6 +82,46 @@ void read_password(secure_vector<char>& password) {
 
     std::cout << std::endl;
 }
+#else
+// Define a class to manage terminal settings, ensuring they are restored
+// even if an exception is thrown.
+class TerminalSettings {
+public:
+    TerminalSettings() {
+        tcgetattr(STDIN_FILENO, &oldt); // Save old settings
+        newt = oldt;
+        newt.c_lflag &= ~(ECHO); // Turn off echo
+        tcsetattr(STDIN_FILENO, TCSANOW, &newt); // Apply new settings
+    }
+
+    ~TerminalSettings() {
+        tcsetattr(STDIN_FILENO, TCSANOW, &oldt); // Restore old settings upon destruction
+    }
+
+private:
+    struct termios oldt, newt;
+};
+
+void read_password(secure_vector<char>& password) {
+    TerminalSettings ts; // Terminal settings will be restored when this object goes out of scope
+
+    int ch;
+    while (true) {
+        ch = getchar();
+        if (ch == '\n' || ch == EOF) {
+            break; // End input on newline or EOF
+        } else if ((ch == '\b' || ch == '\x7f') && !password.empty()) { // Handle backspace and DEL
+            password.pop_back();
+        } else if (ch >= ' ' && ch <= '~') { // Accept printable characters
+            password.push_back(static_cast<char>(ch));
+        }
+        // Ignore other non-printable characters
+    }
+
+    std::cout << std::endl;
+}
+
+#endif
 
 
 int main(int argc, char* argv[]) {
@@ -151,8 +208,7 @@ int main(int argc, char* argv[]) {
     {
       if (!quietMode) {
         std::string msg = errStr.str();
-        std::cout << msg;
-        showHelp();
+        showHelp(msg);
       }
       return -1;
     }
@@ -168,13 +224,20 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
+    if (!quietMode) {
+        std::cout << "Cipherator " << VERSION << std::endl << std::endl;
+    }
+
     if (passwordSpecified && password.empty()) {
-        std::cout << "Enter password: ";
+        if (!quietMode)
+            std::cout << "Enter password: ";
+        std::cout.flush();
         read_password(password);
     }
 
     if (keyFileSpecified && keyfile.empty()) {
-        std::cout << "Enter keyfile path: ";
+        if (!quietMode)
+            std::cout << "Enter keyfile path: ";
         std::getline(std::cin, keyfile);
     }
 

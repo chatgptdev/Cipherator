@@ -18,8 +18,14 @@
  */
 
 #pragma once
+#ifdef _WIN32
 #include <Windows.h>
 #include <bcrypt.h>
+#elif __APPLE__
+#include <CommonCrypto/CommonCrypto.h>
+#else
+#include <openssl/evp.h>
+#endif
 #include "secure_vector.h"
 
 class Encryption {
@@ -33,6 +39,8 @@ public:
     void decrypt(const unsigned char* pData, size_t data_len, const secure_vector<unsigned char>& key, const secure_vector<unsigned char>& iv, secure_vector<unsigned char>& decryptedData);
 
 protected:
+#ifdef _WIN32
     BCRYPT_ALG_HANDLE hAesAlgorithm;
+#endif
 };
 

@@ -18,8 +18,18 @@
  */
 
 #pragma once
+#ifdef _WIN32
 #include <Windows.h>
 #include <bcrypt.h>
+#else
+#ifdef __APPLE__
+#include <CommonCrypto/CommonCrypto.h>
+#else
+#include <openssl/evp.h>
+#include <openssl/sha.h>
+#include <openssl/hmac.h>
+#endif
+#endif
 #include <stdexcept>
 #include <string>
 #include "secure_vector.h"
@@ -34,8 +44,11 @@ public:
     secure_vector<unsigned char> deriveIVFromNonce(const secure_vector<unsigned char>& nonce, uint64_t counter);
 
 protected:
+#ifdef _WIN32
     BCRYPT_ALG_HANDLE hSha256Algorithm;
     BCRYPT_ALG_HANDLE hHMACSha256Algorithm;
+#endif
+
     size_t iterationsCount;
 };
 

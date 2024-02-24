@@ -20,13 +20,22 @@
 #include <iostream>
 #include <fstream>
 #include "crypto_tool.h"
+#ifdef _WIN32
+#include <bcrypt.h>
+#elif defined(__APPLE__)
+#include <Security/Security.h>
+#else
+#include <openssl/rand.h>
+#endif
 
 constexpr size_t SALT_SIZE = 32;
 constexpr size_t CHUNK_SIZE = 64 * 1024;
 
+extern bool quietMode;
+
 secure_vector<unsigned char> CryptoTool::generateRandom(size_t count) {
     secure_vector<unsigned char> rnd(count);
-
+#ifdef _WIN32
     BCRYPT_ALG_HANDLE hAlg = NULL;
     NTSTATUS status = BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_RNG_ALGORITHM, NULL, 0);
     if (status != ERROR_SUCCESS) {
@@ -40,6 +49,16 @@ secure_vector<unsigned char> CryptoTool::generateRandom(size_t count) {
     }
 
     BCryptCloseAlgorithmProvider(hAlg, 0);
+#elif defined(__APPLE__)
+    if (SecRandomCopyBytes(kSecRandomDefault, count, rnd.data()) != 0) {
+        throw std::runtime_error("Failed to generate random salt.");
+    }
+#else
+    // use OpenSSL random generator
+    if (RAND_bytes(rnd.data(), count) != 1) {
+        throw std::runtime_error("Failed to generate random salt.");
+    }
+#endif
     return rnd;
 }
 
@@ -94,7 +113,9 @@ bool CryptoTool::encrypt(const std::string& inputFile, const std::string& output
         return true;
     }
     catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+        if (!quietMode) {
+            std::cerr << "Encryption failed: " << e.what() << std::endl;
+        }
         return false;
     }
 }
@@ -158,7 +179,9 @@ bool CryptoTool::decrypt(const std::string& inputFile, const std::string& output
         return true;
     }
     catch (const std::exception& e) {
-        std::cerr << e.what() << std::endl;
+        if (!quietMode) {
+            std::cerr << "Decryption failed: " << e.what() << std::endl;
+        }
         return false;
     }
 }
